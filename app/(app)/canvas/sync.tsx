@@ -1,111 +1,22 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, StyleSheet, ScrollView, SafeAreaView, Animated, Dimensions, Platform } from 'react-native';
 import { Text, Button, Card, Checkbox, useTheme, ActivityIndicator, Chip, FAB } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
 import { CanvasService } from '../../../src/services/canvas';
 import type { AppTheme } from '../../../src/theme';
+import * as Haptics from 'expo-haptics';
 
 export default function CanvasSyncScreen() {
   const theme = useTheme<AppTheme>();
   const router = useRouter();
+  const { width } = Dimensions.get('window');
 
-  const styles = StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: theme.colors.background,
-    },
-    mainContent: {
-      flex: 1,
-      paddingBottom: 100,
-    },
-    centered: {
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    header: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      padding: 16,
-      paddingBottom: 8,
-    },
-    titleContainer: {
-      flex: 1,
-      marginRight: 16,
-    },
-    selectAllButton: {
-      minWidth: 120,
-    },
-    error: {
-      padding: 16,
-      paddingTop: 0,
-    },
-    scrollView: {
-      flex: 1,
-    },
-    scrollContent: {
-      paddingBottom: 16,
-    },
-    courseList: {
-      padding: 16,
-      paddingTop: 0,
-    },
-    courseCard: {
-      marginBottom: 16,
-    },
-    courseHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    courseName: {
-      flex: 1,
-      marginLeft: 8,
-    },
-    courseContent: {
-      marginTop: 16,
-    },
-    courseSelectAllButton: {
-      marginBottom: 16,
-    },
-    assignmentsContainer: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      marginTop: 16,
-      gap: 8,
-    },
-    assignmentChip: {
-      marginVertical: 4,
-    },
-    bottomContainer: {
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      right: 0,
-      padding: 16,
-      paddingTop: 8,
-      borderTopWidth: 1,
-      borderTopColor: theme.colors.surfaceVariant,
-      backgroundColor: theme.colors.surface,
-      elevation: 4,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: -2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
-      zIndex: 1000,
-    },
-    importButton: {
-      width: '100%',
-      height: 48,
-    },
-    fab: {
-      position: 'absolute',
-      right: 16,
-      bottom: 32,
-      borderRadius: 32,
-      zIndex: 1000,
-    },
-  });
+  // Animation values using useRef to persist between renders
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(50)).current;
+  const scaleAnim = useRef(new Animated.Value(0.95)).current;
+  const fabAnim = useRef(new Animated.Value(0)).current;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,10 +29,170 @@ export default function CanvasSyncScreen() {
   const [selectAllCourses, setSelectAllCourses] = useState(false);
   const [courseSelectAll, setCourseSelectAll] = useState<{ [key: number]: boolean }>({});
 
+  const styles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    mainContent: {
+      flex: 1,
+    },
+    headerSection: {
+      backgroundColor: theme.colors.surface,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.surfaceVariant,
+      elevation: 2,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 3,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 24,
+      paddingBottom: 16,
+    },
+    titleContainer: {
+      flex: 1,
+      marginRight: 16,
+    },
+    title: {
+      fontSize: 28,
+      fontWeight: '700',
+      color: theme.colors.primary,
+      marginBottom: 4,
+    },
+    subtitle: {
+      fontSize: 14,
+      color: theme.colors.secondary,
+      opacity: 0.8,
+    },
+    importSection: {
+      paddingHorizontal: 24,
+      paddingBottom: 16,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    importButton: {
+      flex: 1,
+      borderRadius: 12,
+    },
+    selectAllButton: {
+      minWidth: 120,
+      borderRadius: 12,
+      marginLeft: 12,
+    },
+    error: {
+      margin: 16,
+      padding: 16,
+      backgroundColor: theme.colors.errorContainer,
+      borderRadius: 12,
+    },
+    errorText: {
+      color: theme.colors.error,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    scrollView: {
+      flex: 1,
+    },
+    scrollContent: {
+      padding: 16,
+      paddingBottom: 80,
+    },
+    courseCard: {
+      marginBottom: 16,
+      borderRadius: 16,
+      elevation: 3,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      overflow: 'hidden',
+    },
+    courseHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 8,
+    },
+    courseName: {
+      flex: 1,
+      marginLeft: 12,
+      fontSize: 18,
+      fontWeight: '600',
+    },
+    courseContent: {
+      marginTop: 16,
+      paddingHorizontal: 8,
+    },
+    courseSelectAllButton: {
+      marginBottom: 16,
+      borderRadius: 12,
+    },
+    assignmentsContainer: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      paddingBottom: 8,
+    },
+    assignmentChip: {
+      borderRadius: 20,
+      height: 36,
+    },
+    selectedChip: {
+      backgroundColor: theme.colors.primaryContainer,
+    },
+    fabContainer: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      paddingBottom: Platform.OS === 'ios' ? 40 : 24, // Adjust for iPhone home indicator
+      paddingHorizontal: 16,
+      backgroundColor: 'transparent',
+      // Add padding top for gradient effect if desired
+      paddingTop: 20,
+    },
+    noAssignments: {
+      color: theme.colors.secondary,
+      fontStyle: 'italic',
+      textAlign: 'center',
+      padding: 16,
+    },
+    fab: {
+      position: 'absolute',
+      right: 16,
+      bottom: 16, // Changed from dynamic value to fixed
+      borderRadius: 16,
+      paddingHorizontal: 24,
+      zIndex: 1000, // Ensure FAB stays on top
+    },
+    loadingContainer: {
+      backgroundColor: theme.colors.surface,
+      padding: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      elevation: 4,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.15,
+      shadowRadius: 8,
+    },
+    loadingText: {
+      marginTop: 16,
+      color: theme.colors.secondary,
+      fontSize: 16,
+    },
+  });
+
   useEffect(() => {
     initializeCanvas();
   }, []);
 
+  // Initialization function remains the same
   const initializeCanvas = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -143,12 +214,39 @@ export default function CanvasSyncScreen() {
       
       const courses = await service.getCourses();
       setCourses(courses);
+
+      // Start entrance animations after data is loaded
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scaleAnim, {
+          toValue: 1,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+      ]).start();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to initialize Canvas');
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    // FAB animation
+    Animated.spring(fabAnim, {
+      toValue: selectedAssignments.size > 0 ? 1 : 0,
+      useNativeDriver: true,
+    }).start();
+  }, [selectedAssignments.size]);
 
   const handleCourseSelect = async (courseId: number) => {
     try {
@@ -438,61 +536,127 @@ export default function CanvasSyncScreen() {
     }
   };
 
+  const handleChipPress = useCallback((assignmentId: number) => {
+    Haptics.selectionAsync();
+    const newSelected = new Set(selectedAssignments);
+    if (newSelected.has(assignmentId)) {
+      newSelected.delete(assignmentId);
+    } else {
+      newSelected.add(assignmentId);
+    }
+    setSelectedAssignments(newSelected);
+  }, [selectedAssignments]);
+
+  
+
   if (loading) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" />
+      <View style={styles.centered}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size={48} color={theme.colors.primary} />
+          <Text style={styles.loadingText}>Loading your courses...</Text>
+        </View>
       </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.mainContent}>
-        <View style={styles.header}>
-          <View style={styles.titleContainer}>
-            <Text variant="headlineMedium" numberOfLines={2}>
-              Import Canvas Assignments
-            </Text>
+        <View style={styles.headerSection}>
+          <View style={styles.header}>
+            <View style={styles.titleContainer}>
+              <Text style={styles.title}>Canvas Sync</Text>
+              <Text style={styles.subtitle}>Import your assignments</Text>
+            </View>
           </View>
-          <Button
-            mode="contained-tonal"
-            onPress={handleSelectAllCourses}
-            style={styles.selectAllButton}
+          
+          <Animated.View 
+            style={[
+              styles.importSection,
+              {
+                opacity: fadeAnim,
+                transform: [{ translateY: slideAnim }]
+              }
+            ]}
           >
-            <Text>{selectAllCourses ? 'Deselect All' : 'Select All'}</Text>
-          </Button>
+            {selectedAssignments.size > 0 ? (
+              <Button
+                mode="contained"
+                onPress={handleImport}
+                loading={loading}
+                disabled={loading}
+                style={styles.importButton}
+                icon="download"
+              >
+                Import {selectedAssignments.size} Assignment{selectedAssignments.size !== 1 ? 's' : ''}
+              </Button>
+            ) : (
+              <Button
+                mode="contained"
+                disabled
+                style={styles.importButton}
+                icon="download"
+              >
+                Select Assignments to Import
+              </Button>
+            )}
+            <Button
+              mode="contained-tonal"
+              onPress={handleSelectAllCourses}
+              style={styles.selectAllButton}
+            >
+              {selectAllCourses ? 'Deselect All' : 'Select All'}
+            </Button>
+          </Animated.View>
         </View>
 
         {error && (
-          <Text style={[styles.error, { color: theme.colors.error }]}>{error}</Text>
+          <Animated.View style={[styles.error, { transform: [{ translateY: slideAnim }] }]}>
+            <Text style={styles.errorText}>{error}</Text>
+          </Animated.View>
         )}
 
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-          <View style={styles.courseList}>
-            {courses.map(course => (
-              <Card key={course.id} style={styles.courseCard}>
+        <ScrollView 
+          style={styles.scrollView} 
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {courses.map((course, index) => (
+            <Animated.View
+              key={course.id}
+              style={{
+                transform: [
+                  { translateY: slideAnim },
+                  { scale: scaleAnim }
+                ],
+                opacity: fadeAnim,
+              }}
+            >
+              <Card style={styles.courseCard}>
                 <Card.Content>
                   <View style={styles.courseHeader}>
                     <Checkbox.Android
                       status={selectedCourses.has(course.id) ? 'checked' : 'unchecked'}
                       onPress={() => handleCourseSelect(course.id)}
+                      color={theme.colors.primary}
                     />
-                    <Text variant="titleMedium" style={styles.courseName}>
-                      {course.name}
-                    </Text>
+                    <Text style={styles.courseName}>{course.name}</Text>
                   </View>
 
                   {selectedCourses.has(course.id) && (
-                    <View style={styles.courseContent}>
+                    <Animated.View 
+                      style={[
+                        styles.courseContent,
+                        { opacity: fadeAnim }
+                      ]}
+                    >
                       <Button
                         mode="outlined"
                         onPress={() => handleCourseSelectAll(course.id)}
                         style={styles.courseSelectAllButton}
                       >
-                        <Text>
-                          {courseSelectAll[course.id] ? 'Deselect All' : 'Select All Assignments'}
-                        </Text>
+                        {courseSelectAll[course.id] ? 'Deselect All' : 'Select All Assignments'}
                       </Button>
 
                       <View style={styles.assignmentsContainer}>
@@ -502,51 +666,32 @@ export default function CanvasSyncScreen() {
                             <Chip
                               key={assignment.id}
                               selected={selectedAssignments.has(assignment.id)}
-                              onPress={() => {
-                                const newSelected = new Set(selectedAssignments);
-                                if (newSelected.has(assignment.id)) {
-                                  newSelected.delete(assignment.id);
-                                } else {
-                                  newSelected.add(assignment.id);
-                                }
-                                setSelectedAssignments(newSelected);
-                              }}
-                              style={styles.assignmentChip}
+                              onPress={() => handleChipPress(assignment.id)}
+                              style={[
+                                styles.assignmentChip,
+                                selectedAssignments.has(assignment.id) && styles.selectedChip
+                              ]}
+                              elevation={2}
                             >
-                              <Text>{assignment.name}</Text>
+                              {assignment.name}
                             </Chip>
                           ))}
                         {assignments.filter(a => a.course_id === course.id).length === 0 && (
-                          <Text style={{ color: theme.colors.textSecondary, fontStyle: 'italic' }}>
+                          <Text style={styles.noAssignments}>
                             No future assignments found
                           </Text>
                         )}
                       </View>
-                    </View>
+                    </Animated.View>
                   )}
                 </Card.Content>
               </Card>
-            ))}
-          </View>
+            </Animated.View>
+          ))}
         </ScrollView>
-      </View>
-
-      {selectedAssignments.size > 0 && (
-        <FAB
-          icon="check"
-          label={`Import ${selectedAssignments.size} Assignment${selectedAssignments.size !== 1 ? 's' : ''}`}
-          onPress={handleImport}
-          loading={loading}
-          disabled={loading}
-          style={[styles.fab, { bottom: 32 }]}
-          theme={{
-            colors: {
-              onPrimary: theme.colors.onPrimary,
-              primary: theme.colors.primary
-            }
-          }}
-        />
-      )}
+        </View>
+      
+    
     </SafeAreaView>
   );
-} 
+}
