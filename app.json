@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "scheme": "acme",
+    "plugins": [
+      "expo-router"
+    ],
+    "name": "IntelliPlanAI",
+    "slug": "IntelliPlanAI",
+    "experiments": {
+      "newArchEnabled": true
+    }
+  }
+}
