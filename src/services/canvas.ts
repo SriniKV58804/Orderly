@@ -39,47 +39,18 @@ export class CanvasService {
 
   private async fetchFromCanvas(endpoint: string) {
     const url = `https://${this.domain}/api/v1${endpoint}`;
-    console.log('Canvas API Request:', {
-      url,
-      domain: this.domain,
-      endpoint,
-      tokenLength: this.token.length
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${this.token}`,
+        'Accept': 'application/json',
+      },
     });
-    
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${this.token}`,
-          'Accept': 'application/json',
-        },
-      });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Canvas API Error:', {
-          status: response.status,
-          statusText: response.statusText,
-          url,
-          error: errorText,
-          headers: Object.fromEntries(response.headers.entries())
-        });
-        throw new Error(`Canvas API error: ${response.statusText} - ${errorText}`);
-      }
-
-      const data = await response.json();
-      console.log('Canvas API Success:', {
-        url,
-        responseSize: JSON.stringify(data).length
-      });
-      return data;
-    } catch (error) {
-      console.error('Canvas API Exception:', {
-        url,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined
-      });
-      throw error;
+    if (!response.ok) {
+      throw new Error(`Canvas API error: ${response.statusText}`);
     }
+
+    return response.json();
   }
 
   private async fetchAllPages<T>(endpoint: string): Promise<T[]> {
@@ -114,15 +85,7 @@ export class CanvasService {
   }
 
   async getCourses(): Promise<CanvasCourse[]> {
-    console.log('Fetching Canvas courses...');
-    try {
-      const courses = await this.fetchAllPages<CanvasCourse>('/courses?enrollment_state=active');
-      console.log('Retrieved courses:', courses.length);
-      return courses;
-    } catch (error) {
-      console.error('Failed to fetch courses:', error);
-      throw error;
-    }
+    return this.fetchAllPages<CanvasCourse>('/courses?enrollment_state=active');
   }
 
   async getAssignments(courseId: number): Promise<CanvasAssignment[]> {

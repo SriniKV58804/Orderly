@@ -15,8 +15,7 @@ interface TaskFormProps {
 interface Course {
   id: string;
   name: string;
-  is_canvas_course: boolean;
-  categories: string[];
+  is_canvas_course?: boolean;
 }
 
 interface Category {
@@ -81,7 +80,6 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
   const [loading, setLoading] = useState(true);
   const [courseMenuVisible, setCourseMenuVisible] = useState(false);
   const [categoryMenuVisible, setCategoryMenuVisible] = useState(false);
-  const [selectedCourseCategories, setSelectedCourseCategories] = useState<string[]>([]);
 
   // Header shadow animation
   const headerShadowOpacity = scrollY.interpolate({
@@ -91,74 +89,91 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
   });
 
   useEffect(() => {
+    fetchUserCategories();
     fetchUserCourses();
   }, []);
 
-  const fetchUserCourses = async () => {
+  const fetchUserCategories = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      setLoading(true);
-      // Fetch courses with their categories
-      const { data: coursesData, error } = await supabase
-        .from('courses')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+      const { data, error } = await supabase
+        .from('users')
+        .select('categories')
+        .eq('id', user.id)
+        .single();
 
       if (error) throw error;
+      if (data?.categories) {
+        setCategories(data.categories);
+      }
+    } catch (err) {
+      console.error('Error fetching categories:', err);
+    }
+  };
 
-      // Process courses and remove duplicates using Set
-      const uniqueCourses = Array.from(
-        new Map(
-          coursesData.map(course => [
-            course.id,
-            {
-              id: course.id,
-              name: course.is_canvas_course ? `${course.name} (Canvas)` : course.name,
-              is_canvas_course: course.is_canvas_course,
-              categories: Array.isArray(course.categories) ? course.categories : []
-            }
-          ])
-        ).values()
-      );
+  const fetchUserCourses = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        console.error('No authenticated user found');
+        return;
+      }
 
-      setCourses(uniqueCourses);
+      console.log('Fetching courses for user:', user.id);
 
-      // If editing, select the current course and its categories
+      // Fetch both regular and Canvas courses
+      const { data: coursesData, error: coursesError } = await supabase
+        .from('courses')
+        .select(`
+          id,
+          name,
+          is_canvas_course,
+          canvas_course_id
+        `)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false }); // Show newest first
+
+      if (coursesError) {
+        console.error('Course fetch error:', coursesError);
+        throw coursesError;
+      }
+
+      console.log('Fetched courses:', coursesData);
+
+      if (!coursesData) {
+        console.log('No courses found');
+        setCourses([]);
+        return;
+      }
+
+      // Process courses with proper icons and names
+      const processedCourses = coursesData.map(course => ({
+        id: course.id,
+        name: course.is_canvas_course ? `${course.name} (Canvas)` : course.name,
+        is_canvas_course: course.is_canvas_course,
+        canvas_course_id: course.canvas_course_id
+      }));
+
+      console.log('Processed courses:', processedCourses);
+      setCourses(processedCourses);
+
+      // If editing, select the current course
       if (initialValues?.course_id) {
-        const course = uniqueCourses.find(c => c.id === initialValues.course_id);
-        if (course) {
-          setSelectedCourse(course.id);
-          setSelectedCourseCategories(course.categories);
+        setSelectedCourse(initialValues.course_id);
+        const selectedCourse = processedCourses.find(c => c.id === initialValues.course_id);
+        if (selectedCourse) {
           setValues(prev => ({
             ...prev,
-            course: course.name,
-            category: initialValues.category || ''
+            course: selectedCourse.name
           }));
         }
       }
     } catch (err) {
       console.error('Error fetching courses:', err);
-      Alert.alert('Error', 'Failed to fetch courses');
-    } finally {
-      setLoading(false);
+      Alert.alert('Error', 'Failed to fetch courses. Please try again.');
     }
-  };
-
-  const handleCourseSelect = (courseId: string, courseName: string) => {
-    const course = courses.find(c => c.id === courseId);
-    if (!course) return;
-
-    setSelectedCourse(courseId);
-    setSelectedCourseCategories(course.categories || []);
-    setValues(prev => ({
-      ...prev,
-      course: courseName,
-      course_id: courseId,
-      category: '' // Reset category when switching courses
-    }));
   };
 
   const handleSubmit = () => {
@@ -249,64 +264,6 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
     );
   };
 
-  const renderCategories = () => {
-    if (!selectedCourse) return null;
-
-    const course = courses.find(c => c.id === selectedCourse);
-    if (!course) return null;
-
-    return (
-      <View style={styles.categorySelection}>
-        <Text style={styles.sectionTitle}>Category</Text>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          style={styles.chipScroll}
-        >
-          {course.categories.length > 0 ? (
-            course.categories.map((category, index) => (
-              <TouchableOpacity
-                key={`${selectedCourse}-${category}-${index}`}
-                onPress={() => setValues(prev => ({ ...prev, category }))}
-                style={[
-                  styles.categoryChip,
-                  {
-                    backgroundColor: values.category === category ? 
-                      theme.colors.primaryContainer : 
-                      theme.colors.surfaceVariant
-                  }
-                ]}
-              >
-                <MaterialCommunityIcons
-                  name={getCategoryIcon(category)}
-                  size={18}
-                  color={values.category === category ? 
-                    theme.colors.onPrimaryContainer : 
-                    theme.colors.onSurfaceVariant
-                  }
-                />
-                <Text style={[
-                  styles.categoryChipText,
-                  {
-                    color: values.category === category ? 
-                      theme.colors.onPrimaryContainer : 
-                      theme.colors.onSurfaceVariant
-                  }
-                ]}>
-                  {category}
-                </Text>
-              </TouchableOpacity>
-            ))
-          ) : (
-            <Text style={[styles.noCategories, { color: theme.colors.textSecondary }]}>
-              No categories available for this course
-            </Text>
-          )}
-        </ScrollView>
-      </View>
-    );
-  };
-
   return (
     <View style={styles.container}>
       <Animated.View style={[
@@ -366,8 +323,15 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
             >
               {courses.map(course => (
                 <TouchableOpacity
-                  key={`course-${course.id}`}
-                  onPress={() => handleCourseSelect(course.id, course.name)}
+                  key={course.id}
+                  onPress={() => {
+                    setSelectedCourse(course.id);
+                    setValues(prev => ({
+                      ...prev,
+                      course: course.name,
+                      course_id: course.id
+                    }));
+                  }}
                   style={[
                     styles.courseChip,
                     {
@@ -400,7 +364,50 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
             </ScrollView>
           </View>
 
-          {selectedCourse && renderCategories()}
+          {selectedCourse && (
+            <View style={styles.categorySelection}>
+              <Text style={styles.sectionTitle}>Category</Text>
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                style={styles.chipScroll}
+              >
+                {categories.map(category => (
+                  <TouchableOpacity
+                    key={category}
+                    onPress={() => setValues({ ...values, category })}
+                    style={[
+                      styles.categoryChip,
+                      {
+                        backgroundColor: values.category === category ? 
+                          theme.colors.primaryContainer : 
+                          theme.colors.surfaceVariant
+                      }
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name={getCategoryIcon(category)}
+                      size={18}
+                      color={values.category === category ? 
+                        theme.colors.onPrimaryContainer : 
+                        theme.colors.onSurfaceVariant
+                      }
+                    />
+                    <Text style={[
+                      styles.categoryChipText,
+                      {
+                        color: values.category === category ? 
+                          theme.colors.onPrimaryContainer : 
+                          theme.colors.onSurfaceVariant
+                      }
+                    ]}>
+                      {category}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
 
           <TextInput
             label="Description"
