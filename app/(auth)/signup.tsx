@@ -28,32 +28,53 @@ export default function SignUpScreen() {
         throw new Error('Passwords do not match');
       }
 
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(credentials.email)) {
+        throw new Error('Please enter a valid email address');
+      }
+
+      // Validate password strength
+      if (credentials.password.length < 6) {
+        throw new Error('Password must be at least 6 characters long');
+      }
+
+      console.log('Attempting to sign up with:', credentials.email);
       const { data: authData, error: signUpError } = await supabase.auth.signUp({
         email: credentials.email,
         password: credentials.password,
+        options: {
+          emailRedirectTo: 'yourapp://login-callback'
+        }
       });
 
-      if (signUpError) throw signUpError;
-      if (!authData.user) throw new Error('Failed to create user');
-
-      const { error: createUserError } = await supabase
-        .from('users')
-        .upsert({
-          id: authData.user.id,
-          email: authData.user.email,
-          setup_completed: false
-        })
-        .single();
-
-      if (createUserError) {
-        console.error('Create user error:', createUserError);
-        throw createUserError;
+      if (signUpError) {
+        console.error('Signup error:', signUpError);
+        throw new Error(signUpError.message);
       }
 
-      router.replace('/login');
+      if (!authData.user) {
+        console.error('No user data returned from signup');
+        throw new Error('Failed to create user account');
+      }
+
+      // Show success message and instructions
+      setError('Please check your email to confirm your account. After confirmation, you can log in.');
+      
+      // Clear the form
+      setCredentials({
+        email: '',
+        password: '',
+        confirmPassword: '',
+      });
+
+      // Redirect to login after showing the message
+      setTimeout(() => {
+        router.replace('/login');
+      }, 3000);
     } catch (err) {
       console.error('Signup error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to sign up');
+      setError(err instanceof Error ? err.message : 'Failed to sign up. Please try again.');
     } finally {
       setLoading(false);
     }

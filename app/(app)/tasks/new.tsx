@@ -14,14 +14,11 @@ export default function NewTaskScreen() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      // Ensure we have valid dates
-      const dueDate = values.due_date instanceof Date ? 
-        values.due_date : 
-        new Date(values.due_date || new Date());
-
-      const workDate = values.work_date instanceof Date ? 
-        values.work_date : 
-        values.work_date ? new Date(values.work_date) : null;
+      // Ensure due_date is a valid Date object
+      const dueDate = new Date(values.due_date);
+      if (!(dueDate instanceof Date) || isNaN(dueDate.getTime())) {
+        throw new Error('Invalid due date');
+      }
 
       // Create the task with proper date formatting and course handling
       const { error: createError } = await supabase
@@ -31,12 +28,13 @@ export default function NewTaskScreen() {
           title: values.title,
           description: values.description,
           category: values.category,
-          due_date: dueDate.toISOString(),
-          work_date: workDate?.toISOString() || null,
+          course: values.course,
+          course_id: values.course_id,
+          due_date: dueDate.toISOString(), // Use the validated date
+          work_date: values.work_date ? new Date(values.work_date).toISOString() : null,
           status: 'pending',
           priority: values.priority || 3,
-          course_id: values.course_id || null,
-          is_canvas_task: false // Set this for non-Canvas tasks
+          is_canvas_task: false
         });
 
       if (createError) throw createError;
@@ -63,4 +61,4 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-}); 
+});
