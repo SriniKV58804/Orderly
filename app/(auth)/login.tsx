@@ -27,7 +27,7 @@ export default function LoginScreen() {
         email: credentials.email,
         password: credentials.password,
       });
-
+      router.replace('/dashboard');
       if (signInError) throw signInError;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sign in');
