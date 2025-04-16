@@ -49,6 +49,7 @@ export const PRESET_CATEGORIES = [
   'Other'
 ] as const;
 
+
 export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
   const theme = useTheme<AppTheme>();
   const [categories] = useState<string[]>(PRESET_CATEGORIES);
@@ -663,16 +664,16 @@ const styles = StyleSheet.create({
 // Helper functions
 const getPriorityColor = (priority: number, theme: AppTheme) => {
   switch (priority) {
-    case 5:
-      return theme.colors.error;
-    case 4:
-      return '#FF9800';
-    case 3:
-      return theme.colors.primary;
+    case 1: // High
+      return '#FF4B4B'; // Vibrant red
     case 2:
-      return theme.colors.secondary;
-    default:
-      return theme.colors.surfaceVariant;
+      return '#FFA726'; // Bright orange
+    case 3:
+      return '#66BB6A'; // Fresh green
+    case 4:
+      return '#42A5F5'; // Bright blue
+    default: // Low
+      return '#9E9E9E'; // Neutral grey
   }
 };
 
