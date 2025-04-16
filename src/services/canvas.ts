@@ -40,7 +40,15 @@ export class CanvasService {
   }
 
   private async fetchFromCanvas(endpoint: string) {
-    const url = `https://${this.domain}/api/v1${endpoint}`;
+    // Check if we're running in web mode
+    const isWeb = typeof window !== 'undefined';
+    
+    // Use proxy in web mode, direct URL in native
+    const baseUrl = isWeb 
+      ? `/api/${this.domain}`  // This will be proxied to the user's Canvas domain
+      : `https://${this.domain}`;
+      
+    const url = `${baseUrl}/api/v1${endpoint}`;
     const response = await fetch(url, {
       headers: {
         'Authorization': `Bearer ${this.token}`,
@@ -60,10 +68,17 @@ export class CanvasService {
     let page = 1;
     let hasMore = true;
 
+    // Check if we're running in web mode
+    const isWeb = typeof window !== 'undefined';
+    const baseUrl = isWeb 
+      ? `/api/${this.domain}`  // This will be proxied to the user's Canvas domain
+      : `https://${this.domain}`;
+
     while (hasMore) {
       const separator = endpoint.includes('?') ? '&' : '?';
       const url = `${endpoint}${separator}page=${page}&per_page=100`;
-      const response = await fetch(`https://${this.domain}/api/v1${url}`, {
+      
+      const response = await fetch(`${baseUrl}/api/v1${url}`, {
         headers: {
           'Authorization': `Bearer ${this.token}`,
           'Accept': 'application/json',
@@ -75,6 +90,7 @@ export class CanvasService {
       }
 
       const items = await response.json();
+      
       if (items.length === 0) {
         hasMore = false;
       } else {
