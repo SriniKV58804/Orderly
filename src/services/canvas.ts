@@ -14,6 +14,8 @@ interface CanvasAssignment {
   points_possible: number;
   course_id: number;
   html_url: string;
+  assignment_group_id?: number;
+  group_name?: string;
 }
 
 interface CanvasAssignmentGroup {
@@ -85,19 +87,42 @@ export class CanvasService {
   }
 
   async getCourses(): Promise<CanvasCourse[]> {
-    return this.fetchAllPages<CanvasCourse>('/courses?enrollment_state=active');
+    const courses = await this.fetchAllPages<CanvasCourse>('/courses?enrollment_state=active');
+    
+    // Filter out duplicate courses by keeping only the most recent enrollment
+    const uniqueCourses = new Map();
+    courses.forEach(course => {
+      if (!uniqueCourses.has(course.name) || course.id > uniqueCourses.get(course.name).id) {
+        uniqueCourses.set(course.name, course);
+      }
+    });
+    
+    return Array.from(uniqueCourses.values());
   }
 
   async getAssignments(courseId: number): Promise<CanvasAssignment[]> {
     const today = new Date().toISOString();
-    return this.fetchAllPages<CanvasAssignment>(
-      `/courses/${courseId}/assignments?bucket=future&start_date=${today}&include[]=description`
+    const assignments = await this.fetchAllPages<CanvasAssignment>(
+      `/courses/${courseId}/assignments?bucket=future&start_date=${today}&include[]=description&include[]=assignment_group`
     );
+
+    // Get assignment groups for proper categorization
+    const groups = await this.getAssignmentGroups(courseId);
+    const groupMap = new Map(groups.map(group => [group.id, group]));
+
+    // Associate assignments with their groups
+    return assignments.map(assignment => ({
+      ...assignment,
+      group_name: groupMap.get(assignment.assignment_group_id)?.name || 'Uncategorized'
+    }));
   }
 
   async getAssignmentGroups(courseId: number): Promise<CanvasAssignmentGroup[]> {
-    return this.fetchAllPages<CanvasAssignmentGroup>(
+    const groups = await this.fetchAllPages<CanvasAssignmentGroup>(
       `/courses/${courseId}/assignment_groups?include[]=assignments`
     );
+
+    // Filter out empty groups and ensure assignments are properly linked
+    return groups.filter(group => group.assignments && group.assignments.length > 0);
   }
-} 
+}

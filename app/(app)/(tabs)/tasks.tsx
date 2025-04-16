@@ -168,14 +168,18 @@ export default function TasksScreen() {
     };
 
     tasks.forEach(task => {
-      const courseId = task.course_id || 'uncategorized';
-      if (!grouped[courseId]) {
-        grouped[courseId] = {
-          courseName: task.course || 'Unknown Course',
-          tasks: [],
-        };
+      if (!task.course_id || !task.course) {
+        grouped.uncategorized.tasks.push(task);
+      } else {
+        const courseId = task.course_id.toString();
+        if (!grouped[courseId]) {
+          grouped[courseId] = {
+            courseName: task.course,
+            tasks: [],
+          };
+        }
+        grouped[courseId].tasks.push(task);
       }
-      grouped[courseId].tasks.push(task);
     });
 
     // Sort tasks within each group
@@ -508,4 +512,4 @@ export default function TasksScreen() {
       </View>
     </View>
   );
-} 
+}

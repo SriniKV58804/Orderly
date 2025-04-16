@@ -382,34 +382,28 @@ export default function CanvasSyncScreen() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      // First delete any existing Canvas items for this user
-      await Promise.all([
-        supabase
-          .from('courses')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('is_canvas_course', true),
-        supabase
-          .from('categories')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('is_canvas_category', true),
-        supabase
-          .from('tasks')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('is_canvas_task', true)
-      ]);
-
       // Get selected assignments
       const assignmentsToImport = assignments.filter(a => selectedAssignments.has(a.id));
       
       // Get unique course IDs from selected assignments
       const selectedCourseIds = new Set(assignmentsToImport.map(a => a.course_id));
+
+      // Get existing Canvas courses for this user
+      const { data: existingCourses } = await supabase
+        .from('courses')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_canvas_course', true);
+
+      // Create a map of canvas_course_id to database course id
+      const courseIdMap = new Map(
+        existingCourses?.map(course => [course.canvas_course_id, course.id]) || []
+      );
       
-      // Create courses
-      const coursesToCreate = courses
+      // Only create courses that don't exist yet
+      const newCourses = courses
         .filter(course => selectedCourseIds.has(course.id))
+        .filter(course => !courseIdMap.has(course.id.toString()))
         .map(course => ({
           user_id: user.id,
           name: course.name,
@@ -417,26 +411,33 @@ export default function CanvasSyncScreen() {
           is_canvas_course: true
         }));
 
-      if (coursesToCreate.length === 0) {
-        throw new Error('No courses selected');
+      if (newCourses.length > 0) {
+        const { data: syncedNewCourses, error: coursesError } = await supabase
+          .from('courses')
+          .insert(newCourses)
+          .select();
+
+        if (coursesError) {
+          console.error('Course creation error:', coursesError);
+          throw new Error('Failed to create courses');
+        }
+
+        // Add new courses to the map
+        syncedNewCourses?.forEach(course => {
+          courseIdMap.set(course.canvas_course_id, course.id);
+        });
       }
 
-      // Insert courses
-      const { data: syncedCourses, error: coursesError } = await supabase
-        .from('courses')
-        .insert(coursesToCreate)
-        .select();
+      // Get existing Canvas tasks to avoid duplicates
+      const { data: existingTasks } = await supabase
+        .from('tasks')
+        .select('canvas_task_id')
+        .eq('user_id', user.id)
+        .eq('is_canvas_task', true);
 
-      if (coursesError) {
-        console.error('Course creation error:', coursesError);
-        throw new Error('Failed to create courses');
-      }
+      const existingTaskIds = new Set(existingTasks?.map(task => task.canvas_task_id) || []);
 
-      if (!syncedCourses || syncedCourses.length === 0) {
-        throw new Error('No courses were created');
-      }
-
-      // Get assignment groups for selected assignments
+      // Get assignment groups and prepare categories
       const selectedGroupIds = new Set(
         assignmentsToImport.map(a => {
           const group = Array.from(assignmentGroups.values())
@@ -445,45 +446,48 @@ export default function CanvasSyncScreen() {
         }).filter(Boolean)
       );
 
-      let syncedCategories = [];
-      
       // Only create categories if we have some
       if (selectedGroupIds.size > 0) {
-        try {
-          // First get existing categories for this user
-          const { data: existingCategories } = await supabase
-            .from('users')
-            .select('categories')
-            .eq('id', user.id)
-            .single();
+        // Get existing categories
+        const { data: existingCategories } = await supabase
+          .from('users')
+          .select('categories')
+          .eq('id', user.id)
+          .single();
 
-          const userCategories = new Set(existingCategories?.categories || []);
+        const userCategories = new Set(existingCategories?.categories || []);
+        
+        // Get new category names from assignment groups
+        const newCategories = Array.from(assignmentGroups.values())
+          .filter(group => selectedGroupIds.has(group.id))
+          .map(group => group.name || 'Uncategorized')
+          .filter(name => !userCategories.has(name));
+
+        if (newCategories.length > 0) {
+          const updatedCategories = [...Array.from(userCategories), ...newCategories];
           
-          // Get new category names from assignment groups
-          const newCategories = Array.from(assignmentGroups.values())
-            .filter(group => selectedGroupIds.has(group.id))
-            .map(group => group.name || 'Uncategorized')
-            .filter(name => !userCategories.has(name));
+          const { error: updateError } = await supabase
+            .from('users')
+            .update({ categories: updatedCategories })
+            .eq('id', user.id);
 
-          if (newCategories.length > 0) {
-            // Update user's categories array
-            const updatedCategories = [...Array.from(userCategories), ...newCategories];
-            
-            const { error: updateError } = await supabase
-              .from('users')
-              .update({ categories: updatedCategories })
-              .eq('id', user.id);
-
-            if (updateError) {
-              console.error('Failed to update user categories:', updateError);
-              throw updateError;
-            }
+          if (updateError) {
+            console.error('Failed to update user categories:', updateError);
+            throw updateError;
           }
+        }
 
-          // Now create the tasks with the category names
-          const tasks = assignmentsToImport.map(assignment => {
-            const course = syncedCourses.find(c => c.canvas_course_id === assignment.course_id.toString());
-            if (!course) {
+        // Set a far future date for assignments without due dates (Dec 31, 2099)
+        const DEFAULT_DUE_DATE = new Date(2099, 11, 31).toISOString();
+
+        // Create only new tasks
+        const newTasks = assignmentsToImport
+          .filter(assignment => !existingTaskIds.has(assignment.id.toString()))
+          .map(assignment => {
+            const courseId = courseIdMap.get(assignment.course_id.toString());
+            const courseName = courses.find(c => c.id === assignment.course_id)?.name;
+            
+            if (!courseId || !courseName) {
               console.error('No matching course found for assignment:', assignment);
               return null;
             }
@@ -495,42 +499,35 @@ export default function CanvasSyncScreen() {
               user_id: user.id,
               title: assignment.name,
               description: cleanHtmlDescription(assignment.description),
-              due_date: assignment.due_at ? new Date(assignment.due_at).toISOString() : null,
-              category: group?.name || 'Uncategorized',
+              due_date: assignment.due_at ? new Date(assignment.due_at).toISOString() : DEFAULT_DUE_DATE,
+              category: assignment.group_name || 'Uncategorized',
               priority: 3,
               is_canvas_task: true,
               canvas_task_id: assignment.id.toString(),
-              course_id: course.id,
-              course: course.name,
+              course_id: courseId,
+              course: courseName,
               status: 'pending'
             };
-          }).filter(task => task !== null);
+          })
+          .filter((task): task is NonNullable<typeof task> => task !== null);
 
-          if (tasks.length === 0) {
-            throw new Error('No valid tasks to create');
-          }
-
-          console.log('Creating tasks:', tasks);
-
+        if (newTasks.length > 0) {
           const { error: taskError } = await supabase
             .from('tasks')
-            .insert(tasks);
+            .insert(newTasks);
 
           if (taskError) {
             console.error('Task creation error:', taskError);
             throw new Error(`Failed to create tasks: ${taskError.message}`);
           }
-
-          // Success! Go back to tasks screen
-          router.back();
-        } catch (err) {
-          console.error('Import error:', err);
-          throw err;
         }
+
+        // Success! Go back to tasks screen
+        router.back();
       }
     } catch (err) {
       console.error('Import error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to import assignments. Please try again.');
+      setError(err instanceof Error ? err.message : 'Failed to import assignments');
     } finally {
       setLoading(false);
     }
