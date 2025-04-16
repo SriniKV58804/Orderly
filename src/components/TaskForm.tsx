@@ -5,6 +5,7 @@ import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { AppTheme } from '../theme';
 import { supabase } from '../lib/supabase';
+import { CanvasService } from '../services/canvas';
 
 interface TaskFormProps {
   onSubmit: (task: any) => void;
@@ -34,38 +35,36 @@ interface FormValues {
   work_date: Date | null;
 }
 
+export const PRESET_CATEGORIES = [
+  'Homework',
+  'Quiz',
+  'Exam',
+  'Project',
+  'Lab',
+  'Discussion',
+  'Reading',
+  'Paper',
+  'Presentation',
+  'Study',
+  'Other'
+] as const;
+
 export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
   const theme = useTheme<AppTheme>();
-  const [categories, setCategories] = useState<string[]>([]);
-  const [values, setValues] = useState<FormValues>(() => {
-    let dueDate: Date;
-    try {
-      dueDate = initialValues?.due_date ? 
-        new Date(initialValues.due_date) : 
-        new Date();
-    } catch (e) {
-      dueDate = new Date();
-    }
-
-    let workDate: Date | null = null;
-    try {
-      workDate = initialValues?.work_date ? 
-        new Date(initialValues.work_date) : 
-        null;
-    } catch (e) {
-      workDate = null;
-    }
-
-    return {
-      title: initialValues?.title || '',
-      description: initialValues?.description || '',
-      category: initialValues?.category || '',
-      course: initialValues?.course || '',
-      priority: initialValues?.priority || 3,
-      due_date: dueDate,
-      work_date: workDate,
-    };
-  });
+  const [categories] = useState<string[]>(PRESET_CATEGORIES);
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [newCategory, setNewCategory] = useState('');
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [canvasService, setCanvasService] = useState<CanvasService | null>(null);
+  const [values, setValues] = useState<FormValues>(() => ({
+    title: initialValues?.title || '',
+    description: initialValues?.description || '',
+    category: initialValues?.category || '',
+    course: initialValues?.course || '',
+    priority: initialValues?.priority || 3,
+    due_date: initialValues?.due_date ? new Date(initialValues.due_date) : new Date(),
+    work_date: initialValues?.work_date ? new Date(initialValues.work_date) : null,
+  }));
   const [showDueDatePicker, setShowDueDatePicker] = useState(false);
   const [showWorkDatePicker, setShowWorkDatePicker] = useState(false);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -89,11 +88,11 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
   });
 
   useEffect(() => {
-    fetchUserCategories();
-    fetchUserCourses();
+    fetchUserCustomCategories();
+    initializeCanvasAndFetchCourses();
   }, []);
 
-  const fetchUserCategories = async () => {
+  const fetchUserCustomCategories = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -106,81 +105,71 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
 
       if (error) throw error;
       if (data?.categories) {
-        setCategories(data.categories);
+        setCustomCategories(data.categories);
       }
     } catch (err) {
-      console.error('Error fetching categories:', err);
+      console.error('Error fetching custom categories:', err);
     }
   };
 
-  const fetchUserCourses = async () => {
+  const initializeCanvasAndFetchCourses = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        console.error('No authenticated user found');
+      if (!user) return;
+
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('canvas_domain, canvas_token')
+        .eq('id', user.id)
+        .single();
+
+      if (userError || !userData?.canvas_domain || !userData?.canvas_token) {
         return;
       }
 
-      console.log('Fetching courses for user:', user.id);
+      const service = new CanvasService(userData.canvas_domain, userData.canvas_token);
+      setCanvasService(service);
 
-      // Fetch both regular and Canvas courses
-      const { data: coursesData, error: coursesError } = await supabase
-        .from('courses')
-        .select(`
-          id,
-          name,
-          is_canvas_course,
-          canvas_course_id
-        `)
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false }); // Show newest first
-
-      if (coursesError) {
-        console.error('Course fetch error:', coursesError);
-        throw coursesError;
-      }
-
-      console.log('Fetched courses:', coursesData);
-
-      if (!coursesData) {
-        console.log('No courses found');
-        setCourses([]);
-        return;
-      }
-
-      // Process courses with proper icons and names
-      const processedCourses = coursesData.map(course => ({
-        id: course.id,
-        name: course.is_canvas_course ? `${course.name} (Canvas)` : course.name,
-        is_canvas_course: course.is_canvas_course,
-        canvas_course_id: course.canvas_course_id
-      }));
-
-      console.log('Processed courses:', processedCourses);
-      setCourses(processedCourses);
-
-      // If editing, select the current course
-      if (initialValues?.course_id) {
-        setSelectedCourse(initialValues.course_id);
-        const selectedCourse = processedCourses.find(c => c.id === initialValues.course_id);
-        if (selectedCourse) {
-          setValues(prev => ({
-            ...prev,
-            course: selectedCourse.name
-          }));
-        }
-      }
+      const canvasCourses = await service.getCourses();
+      setCourses(canvasCourses.map(course => ({
+        id: course.id.toString(),
+        name: course.name,
+        is_canvas_course: true
+      })));
     } catch (err) {
-      console.error('Error fetching courses:', err);
-      Alert.alert('Error', 'Failed to fetch courses. Please try again.');
+      console.error('Error fetching Canvas courses:', err);
+    }
+  };
+
+  const handleAddCategory = async () => {
+    if (!newCategory.trim()) return;
+    
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const updatedCategories = [...customCategories, newCategory.trim()];
+      
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ categories: updatedCategories })
+        .eq('id', user.id);
+
+      if (updateError) throw updateError;
+
+      setCustomCategories(updatedCategories);
+      setNewCategory('');
+      setShowAddCategory(false);
+      
+      // Set the new category as selected
+      setValues(prev => ({ ...prev, category: newCategory.trim() }));
+    } catch (err) {
+      console.error('Error adding category:', err);
+      Alert.alert('Error', 'Failed to add category');
     }
   };
 
   const handleSubmit = () => {
-    console.log('Current values:', values);
-    console.log('Due date type:', typeof values.due_date);
-    console.log('Due date value:', values.due_date);
-
     // Reset errors
     setErrors({});
     
@@ -203,27 +192,21 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
     }
 
     try {
-      // Force create a new Date object
-      const now = new Date();
-      let submissionDueDate = values.due_date ? new Date(values.due_date) : now;
+      // Get the selected course
+      const selectedCourseObj = courses.find(c => c.id === selectedCourse);
       
-      if (!(submissionDueDate instanceof Date) || isNaN(submissionDueDate.getTime())) {
-        console.error('Invalid due date, using current date');
-        submissionDueDate = now;
-      }
-
       const formattedTask = {
-        title: values.title,
-        description: values.description,
+        title: values.title.trim(),
+        description: values.description.trim(),
         category: values.category,
-        course: values.course,
+        course: selectedCourseObj?.name || null,
+        // Only set course_id if it's a Canvas course
+        course_id: selectedCourseObj?.is_canvas_course ? selectedCourseObj.id : null,
         priority: values.priority,
-        course_id: selectedCourse,
-        due_date: submissionDueDate.toISOString(),
+        due_date: values.due_date.toISOString(),
         work_date: values.work_date ? new Date(values.work_date).toISOString() : null,
       };
 
-      console.log('Submitting task:', formattedTask);
       onSubmit(formattedTask);
     } catch (err) {
       console.error('Error formatting task:', err);
@@ -263,6 +246,64 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
       </View>
     );
   };
+
+  const renderCategorySelection = () => (
+    <View style={styles.categorySelection}>
+      <Text style={styles.sectionTitle}>Category</Text>
+      <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipScroll}
+      >
+        {[...PRESET_CATEGORIES, ...customCategories].map(category => (
+          <TouchableOpacity
+            key={category}
+            onPress={() => setValues(prev => ({ ...prev, category }))}
+            style={[
+              styles.categoryChip,
+              {
+                backgroundColor: values.category === category ? 
+                  theme.colors.primaryContainer : 
+                  theme.colors.surfaceVariant
+              }
+            ]}
+          >
+            <MaterialCommunityIcons
+              name={getCategoryIcon(category)}
+              size={18}
+              color={values.category === category ? 
+                theme.colors.onPrimaryContainer : 
+                theme.colors.onSurfaceVariant
+              }
+            />
+            <Text style={[
+              styles.categoryChipText,
+              {
+                color: values.category === category ? 
+                  theme.colors.onPrimaryContainer : 
+                  theme.colors.onSurfaceVariant
+              }
+            ]}>
+              {category}
+            </Text>
+          </TouchableOpacity>
+        ))}
+        <TouchableOpacity
+          onPress={() => setShowAddCategory(true)}
+          style={[styles.categoryChip, { backgroundColor: theme.colors.surfaceVariant }]}
+        >
+          <MaterialCommunityIcons
+            name="plus"
+            size={18}
+            color={theme.colors.onSurfaceVariant}
+          />
+          <Text style={[styles.categoryChipText, { color: theme.colors.onSurfaceVariant }]}>
+            Add New
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </View>
+  );
 
   return (
     <View style={styles.container}>
@@ -328,8 +369,7 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
                     setSelectedCourse(course.id);
                     setValues(prev => ({
                       ...prev,
-                      course: course.name,
-                      course_id: course.id
+                      course: course.name
                     }));
                   }}
                   style={[
@@ -364,50 +404,7 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
             </ScrollView>
           </View>
 
-          {selectedCourse && (
-            <View style={styles.categorySelection}>
-              <Text style={styles.sectionTitle}>Category</Text>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                style={styles.chipScroll}
-              >
-                {categories.map(category => (
-                  <TouchableOpacity
-                    key={category}
-                    onPress={() => setValues({ ...values, category })}
-                    style={[
-                      styles.categoryChip,
-                      {
-                        backgroundColor: values.category === category ? 
-                          theme.colors.primaryContainer : 
-                          theme.colors.surfaceVariant
-                      }
-                    ]}
-                  >
-                    <MaterialCommunityIcons
-                      name={getCategoryIcon(category)}
-                      size={18}
-                      color={values.category === category ? 
-                        theme.colors.onPrimaryContainer : 
-                        theme.colors.onSurfaceVariant
-                      }
-                    />
-                    <Text style={[
-                      styles.categoryChipText,
-                      {
-                        color: values.category === category ? 
-                          theme.colors.onPrimaryContainer : 
-                          theme.colors.onSurfaceVariant
-                      }
-                    ]}>
-                      {category}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          )}
+          {renderCategorySelection()}
 
           <TextInput
             label="Description"
@@ -490,43 +487,53 @@ export function TaskForm({ onSubmit, initialValues, onClose }: TaskFormProps) {
             <Button onPress={() => setShowValidationDialog(false)}>OK</Button>
           </Dialog.Actions>
         </Dialog>
+
+        <Dialog
+          visible={showAddCategory}
+          onDismiss={() => setShowAddCategory(false)}
+        >
+          <Dialog.Title>Add New Category</Dialog.Title>
+          <Dialog.Content>
+            <TextInput
+              label="Category Name"
+              value={newCategory}
+              onChangeText={setNewCategory}
+              mode="outlined"
+            />
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setShowAddCategory(false)}>Cancel</Button>
+            <Button onPress={handleAddCategory}>Add</Button>
+          </Dialog.Actions>
+        </Dialog>
       </Portal>
 
       <DateTimePickerModal
         isVisible={showDueDatePicker}
         mode="datetime"
-        onConfirm={(date: Date) => {
-          console.log('Date picker value:', date);
-          const newDate = new Date(date);
-          console.log('New date object:', newDate);
-          
-          if (newDate instanceof Date && !isNaN(newDate.getTime())) {
-            setValues(prev => ({
-              ...prev,
-              due_date: newDate
-            }));
-            console.log('Updated values:', values);
-          } else {
-            console.error('Invalid date from picker');
-            setValues(prev => ({
-              ...prev,
-              due_date: new Date()
-            }));
-          }
+        onConfirm={(date) => {
+          setValues(prev => ({
+            ...prev,
+            due_date: new Date(date)
+          }));
           setShowDueDatePicker(false);
         }}
         onCancel={() => setShowDueDatePicker(false)}
-        date={new Date()}
+        date={values.due_date || new Date()}
       />
 
       <DateTimePickerModal
         isVisible={showWorkDatePicker}
         mode="datetime"
         onConfirm={(date) => {
-          setValues({ ...values, work_date: date });
+          setValues(prev => ({
+            ...prev,
+            work_date: new Date(date)
+          }));
           setShowWorkDatePicker(false);
         }}
         onCancel={() => setShowWorkDatePicker(false)}
+        date={values.work_date || new Date()}
       />
     </View>
   );
@@ -589,31 +596,36 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   chipScroll: {
+    flexGrow: 0,
     marginBottom: 8,
+    paddingVertical: 4,
   },
   courseChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 24,
     marginRight: 8,
-    gap: 6,
+    elevation: 2,
   },
   courseChipText: {
+    marginLeft: 6,
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   categoryChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     marginRight: 8,
-    gap: 6,
+    marginVertical: 4,
+    elevation: 2,
   },
   categoryChipText: {
+    marginLeft: 8,
     fontSize: 14,
     fontWeight: '500',
   },
@@ -644,7 +656,8 @@ const styles = StyleSheet.create({
   },
   categorySelection: {
     marginBottom: 16,
-  }
+    paddingVertical: 8,
+  },
 });
 
 // Helper functions
@@ -663,24 +676,30 @@ const getPriorityColor = (priority: number, theme: AppTheme) => {
   }
 };
 
-const getCategoryIcon = (category: string): "book-open-variant" | "pencil" | "folder" | "file-document" | "book" | "clipboard-text" | "book-open-page-variant" | "magnify" | "checkbox-marked-circle-outline" => {
+const getCategoryIcon = (category: string): string => {
   switch (category.toLowerCase()) {
     case 'homework':
       return 'book-open-variant';
     case 'quiz':
       return 'pencil';
-    case 'project':
-      return 'folder';
     case 'exam':
       return 'file-document';
-    case 'study':
-      return 'book';
-    case 'assignment':
-      return 'clipboard-text';
+    case 'project':
+      return 'folder';
+    case 'lab':
+      return 'flask';
+    case 'discussion':
+      return 'message-text';
     case 'reading':
       return 'book-open-page-variant';
-    case 'research':
-      return 'magnify';
+    case 'paper':
+      return 'file-document-edit';
+    case 'presentation':
+      return 'presentation';
+    case 'study':
+      return 'book';
+    case 'other':
+      return 'dots-horizontal';
     default:
       return 'checkbox-marked-circle-outline';
   }

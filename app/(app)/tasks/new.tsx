@@ -3,41 +3,41 @@ import { View, StyleSheet, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
 import { TaskForm } from '../../../src/components/TaskForm';
+import type { TaskFormData } from '../../../src/types';
 
 export default function NewTaskScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = async (values: TaskFormData) => {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      // Ensure we have valid dates
-      const dueDate = values.due_date instanceof Date ? 
+      // Ensure we have a valid date
+      const due_date = values.due_date instanceof Date ? 
         values.due_date : 
-        new Date(values.due_date || new Date());
+        new Date();
 
-      const workDate = values.work_date instanceof Date ? 
-        values.work_date : 
-        values.work_date ? new Date(values.work_date) : null;
+      // Create task, omitting course_id if it doesn't exist
+      const taskData = {
+        user_id: user.id,
+        title: values.title,
+        description: values.description || '',
+        category: values.category,
+        due_date: due_date.toISOString(),
+        work_date: values.work_date?.toISOString() || null,
+        status: 'pending',
+        priority: values.priority,
+        course: values.course || null,
+        ...(values.course_id ? { course_id: values.course_id } : {}),
+        is_canvas_task: false
+      };
 
-      // Create the task with proper date formatting and course handling
       const { error: createError } = await supabase
         .from('tasks')
-        .insert({
-          user_id: user.id,
-          title: values.title,
-          description: values.description,
-          category: values.category,
-          due_date: dueDate.toISOString(),
-          work_date: workDate?.toISOString() || null,
-          status: 'pending',
-          priority: values.priority || 3,
-          course_id: values.course_id || null,
-          is_canvas_task: false // Set this for non-Canvas tasks
-        });
+        .insert(taskData);
 
       if (createError) throw createError;
       router.back();
@@ -63,4 +63,4 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-}); 
+});
