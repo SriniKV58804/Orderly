@@ -8,6 +8,19 @@
     "slug": "IntelliPlanAI",
     "experiments": {
       "newArchEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png",
+      "proxy": {
+        "/api": {
+          "changeOrigin": true,
+          "secure": true,
+          "pathRewrite": {
+            "^/api": ""
+          }
+        }
+      }
     }
   }
 }
